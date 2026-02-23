@@ -6,10 +6,34 @@ import { SearchFilters } from "@/components/SearchFilters";
 import { FacilityCard } from "@/components/FacilityCard";
 import { facilities as staticFacilities, Facility } from "@/data/facilities";
 import { Button } from "@/components/ui/button";
-import { ChevronDown, Navigation, AlertCircle, Locate, HelpCircle, ExternalLink } from "lucide-react";
+import { ChevronDown, Navigation,  Locate, HelpCircle, } from "lucide-react";
+
+// Define proper types instead of 'any'
+interface ClinicAddress {
+  city?: string;
+  state?: string;
+  formattedAddress?: string;
+  street?: string;
+}
+
+interface ClinicData {
+  _id?: string;
+  name?: string;
+  type?: string;
+  address?: ClinicAddress;
+  ratingAvg?: number;
+  totalReviews?: number;
+  openHours?: string;
+  phoneNumber?: string | number;
+  image?: string;
+  services?: string[];
+  acceptingPatients?: boolean;
+  distance?: number;
+  distanceKm?: number;
+}
 
 // Helper function to transform API clinic to Facility type
-const transformClinicToFacility = (clinic: any, index?: number): Facility => {
+const transformClinicToFacility = (clinic: ClinicData, index?: number): Facility => {
   // Extract location from address
   const location = clinic.address?.city || 
                    clinic.address?.state || 
@@ -17,7 +41,8 @@ const transformClinicToFacility = (clinic: any, index?: number): Facility => {
                    "Unknown Location";
   
   // Generate a consistent ID
-  const id = clinic._id || `clinic-${Date.now()}-${index || Math.random()}`;
+ const id = clinic._id || `clinic-${index}`;
+
   
   // Default images for fallback
   const DEFAULT_IMAGES = {
@@ -46,7 +71,7 @@ const transformClinicToFacility = (clinic: any, index?: number): Facility => {
 };
 
 // Batch transform multiple clinics
-const transformClinicsToFacilities = (clinics: any[]): Facility[] => {
+const transformClinicsToFacilities = (clinics: ClinicData[]): Facility[] => {
   return clinics.map((clinic, index) => transformClinicToFacility(clinic, index));
 };
 
@@ -66,28 +91,34 @@ export default function Home() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [locationPermission, setLocationPermission] = useState<PermissionState | null>(null);
   const [hasRequestedLocation, setHasRequestedLocation] = useState(false);
+  const [apiDebugInfo, setApiDebugInfo] = useState<string>("");
   
   // Add a ref to track if we've already attempted location request
   const locationRequestAttempted = useRef(false);
 
   // Check if geolocation is supported
-  const isGeolocationSupported = typeof window !== 'undefined' && 'geolocation' in navigator;
+  const [isGeolocationSupported, setIsGeolocationSupported] = useState<boolean | null>(null);
   console.log("🔍 Geolocation supported:", isGeolocationSupported);
+useEffect(() => {
+  if (typeof window !== "undefined" && "geolocation" in navigator) {
+    setIsGeolocationSupported(true);
+  } else {
+    setIsGeolocationSupported(false);
+  }
+}, []);
 
   // Check permission status on mount
   useEffect(() => {
     console.log("🔍 Checking permission status...");
     
-    if (!isGeolocationSupported) {
-      console.log("❌ Geolocation not supported");
-      return;
-    }
+   if (isGeolocationSupported !== true) return;
+
 
     // Check if we have permission status API
     if (navigator.permissions && navigator.permissions.query) {
       console.log("🔍 Permissions API available");
       
-      navigator.permissions.query({ name: 'geolocation' })
+      navigator.permissions.query({ name: 'geolocation' as PermissionName })
         .then((result) => {
           console.log("📍 Current permission state:", result.state);
           setLocationPermission(result.state);
@@ -115,7 +146,7 @@ export default function Home() {
   const requestUserLocation = useCallback(() => {
     console.log("📍 requestUserLocation called");
     
-    if (!isGeolocationSupported) {
+   if (isGeolocationSupported !== true) {
       console.log("❌ Geolocation not supported");
       setLocationError("Geolocation is not supported by your browser.");
       return;
@@ -178,62 +209,69 @@ export default function Home() {
   }, [isGeolocationSupported]);
 
   // Fetch nearby clinics when user location is available
-  useEffect(() => {
-    const fetchNearbyClinics = async () => {
-      if (!userLocation) {
-        console.log("📍 No user location, skipping API fetch");
-        return;
-      }
-      
-      console.log("📍 Fetching nearby clinics for location:", userLocation);
-      setIsLoadingClinics(true);
-      setLocationError(null);
-      
-      try {
-        const { lat, lng } = userLocation;
-        const radius = 50; // Default radius in km
-        
-        const url = `http://localhost:8001/api/v1/auth/clinic/location-based-clinics?lat=${lat}&lng=${lng}&radius=${radius}`;
-        console.log("📍 API URL:", url);
-        
-        const response = await fetch(url);
-        console.log("📍 API Response status:", response.status);
-        
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-        
-        const result = await response.json();
-        console.log("📍 API Response data:", result);
-        
-        if (result.success && result.data) {
-          // Transform API data to Facility type
-          const transformedClinics = transformClinicsToFacilities(result.data);
-          console.log("📍 Transformed clinics:", transformedClinics.length);
-          
-          // Calculate distance if not provided by API
-          // const clinicsWithDistance = transformedClinics.map(clinic => ({
-          //   ...clinic,
-          //   distanceKm: clinic.distanceKm || Math.round((Math.random() * 19 + 1) * 10) / 10
-          // }));
-          
-      console.log("📍 Setting nearby clinics:", transformedClinics.length);
-setNearbyClinics(transformedClinics);
-        } else {
-          console.log("📍 No clinics found in API response");
-          setNearbyClinics([]);
-        }
-      } catch (error) {
-        console.error("❌ Error fetching nearby clinics:", error);
-        setLocationError("Failed to fetch nearby clinics. Please try again later.");
-        setNearbyClinics([]);
-      } finally {
-        setIsLoadingClinics(false);
-      }
-    };
+ useEffect(() => {
+  const fetchNearbyClinics = async () => {
+    if (!userLocation) {
+      console.log("📍 No user location, skipping API fetch");
+      return;
+    }
     
-    fetchNearbyClinics();
-  }, [userLocation]);
+    console.log("📍 Fetching nearby clinics for location:", userLocation);
+    setIsLoadingClinics(true);
+    setLocationError(null);
+    setApiDebugInfo("Fetching clinics...");
+    
+    try {
+      const { lat, lng } = userLocation;
+      const radius = 50; // Default radius in km
+      
+      // Single API endpoint
+      const endpoint = `http://localhost:8001/api/v1/auth/clinic/location-based-clinics/?lat=${lat}&lng=${lng}&radius=${radius}`;
+      
+      console.log("📍 Calling API endpoint:", endpoint);
+      
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API responded with status ${response.status}`);
+      }
+      
+      console.log("📍 API Response status:", response.status);
+      
+      const result = await response.json();
+      console.log("📍 API Response data:", result);
+      
+      setApiDebugInfo(`API Success: Found ${result.data?.length || 0} clinics`);
+      
+      if (result.success && result.data) {
+        // Transform API data to Facility type
+        const transformedClinics = transformClinicsToFacilities(result.data);
+        console.log("📍 Transformed clinics:", transformedClinics.length);
+        
+        console.log("📍 Setting nearby clinics:", transformedClinics.length);
+        setNearbyClinics(transformedClinics);
+      } else {
+        console.log("📍 No clinics found in API response");
+        setApiDebugInfo("No clinics found in API response");
+        setNearbyClinics([]);
+      }
+    } catch (error) {
+      console.error("❌ Error fetching nearby clinics:", error);
+      setApiDebugInfo(`API Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setLocationError("Failed to fetch nearby clinics. Please try again later.");
+      setNearbyClinics([]);
+    } finally {
+      setIsLoadingClinics(false);
+    }
+  };
+  
+  fetchNearbyClinics();
+}, [userLocation]);
 
   // Use nearbyClinics if available, otherwise use static facilities
   const displayFacilities = nearbyClinics.length > 0 ? nearbyClinics : staticFacilities;
@@ -307,19 +345,19 @@ setNearbyClinics(transformedClinics);
     window.open('https://support.google.com/chrome/answer/142065?hl=en', '_blank');
   };
 
-  const handleOpenSettings = () => {
-    console.log("📍 Open settings button clicked");
-    window.open('chrome://settings/content/location', '_blank');
-  };
+  // const handleOpenSettings = () => {
+  //   console.log("📍 Open settings button clicked");
+  //   window.open('chrome://settings/content/location', '_blank');
+  // };
 
-  const handleRefreshAfterSettings = () => {
-    console.log("📍 Refresh after settings button clicked");
-    window.location.reload();
-  };
+  // const handleRefreshAfterSettings = () => {
+  //   console.log("📍 Refresh after settings button clicked");
+  //   window.location.reload();
+  // };
 
   // Determine which banner to show
   const showPermissionBanner = !userLocation && !locationError && locationPermission !== 'granted' && !hasRequestedLocation;
-  const showErrorBanner = locationError && !isRequestingLocation;
+  // const showErrorBanner = locationError && !isRequestingLocation;
   const showSuccessBanner = userLocation && !locationError && nearbyClinics.length > 0;
 
   // Show loader only when actively requesting location or fetching clinics
@@ -328,6 +366,13 @@ setNearbyClinics(transformedClinics);
   return (
     <>
       <HeroSection />
+
+      {/* Debug info - remove in production */}
+      {process.env.NODE_ENV === 'development' && apiDebugInfo && (
+        <div className="bg-gray-100 border-b border-gray-200 py-2 px-4 text-xs font-mono">
+          <strong>API Debug:</strong> {apiDebugInfo}
+        </div>
+      )}
 
       {/* Location status banner - Success */}
       {showSuccessBanner && (
@@ -381,85 +426,6 @@ setNearbyClinics(transformedClinics);
         </div>
       )}
 
-      {/* Location error/permission denied banner */}
-      {showErrorBanner && (
-        <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-200 py-4 sticky top-0 z-40 backdrop-blur-sm">
-          <div className="container mx-auto px-4">
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-amber-700">
-                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                  <span className="text-sm font-medium">{locationError}</span>
-                </div>
-                <div className="flex gap-2 w-full sm:w-auto">
-                  <Button
-                    onClick={handleEnableLocation}
-                    disabled={isRequestingLocation}
-                    size="sm"
-                    className="bg-amber-600 hover:bg-amber-700 text-white flex-1 sm:flex-none"
-                  >
-                    {isRequestingLocation ? "Requesting..." : "Try Again"}
-                  </Button>
-                  <Button
-                    onClick={handleOpenSettings}
-                    size="sm"
-                    variant="outline"
-                    className="bg-white/50 hover:bg-white border-amber-300 text-amber-700 flex-1 sm:flex-none"
-                  >
-                    <ExternalLink className="w-4 h-4 mr-1" />
-                    Fix in Settings
-                  </Button>
-                </div>
-              </div>
-              
-              {/* Detailed instructions for Chrome */}
-              <div className="bg-amber-100/50 rounded-lg p-4 text-sm text-amber-800">
-                <p className="font-semibold mb-2">📍 How to reset location permissions in Chrome:</p>
-                <div className="grid gap-2">
-                  <div className="flex items-start gap-2">
-                    <span className="bg-amber-200 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">1</span>
-                    <span>Click the <strong>lock icon</strong> (🔒) in your address bar (left side of the URL)</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="bg-amber-200 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
-                    <span>Click <strong>"Site settings"</strong></span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="bg-amber-200 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
-                    <span>Find <strong>"Location"</strong> and change it to <strong>"Ask" or "Allow"</strong></span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="bg-amber-200 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">4</span>
-                    <span><strong>Refresh</strong> this page and click "Enable Location" again</span>
-                  </div>
-                </div>
-                
-                {/* Alternative method */}
-                <p className="font-semibold mt-3 mb-2">🔄 Alternative method:</p>
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-start gap-2">
-                    <span className="bg-amber-200 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">•</span>
-                    <span>Click the <strong>"Open Settings"</strong> button above, find this site in the list, and reset its permission</span>
-                  </div>
-                  <Button
-                    onClick={handleRefreshAfterSettings}
-                    size="sm"
-                    variant="outline"
-                    className="bg-white hover:bg-amber-50 border-amber-300 text-amber-700 mt-2"
-                  >
-                    Refresh Page After Changing Settings
-                  </Button>
-                </div>
-              </div>
-
-              {/* Browser detection note */}
-              <p className="text-xs text-amber-600 mt-1">
-                ℹ️ These instructions are for Google Chrome. If you're using a different browser, the steps may vary.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       <SearchFilters
         searchQuery={searchQuery}
@@ -504,13 +470,13 @@ setNearbyClinics(transformedClinics);
                   key={facility.id || facility._id}
                   className="relative"
                 >
-                {facility.distanceKm && (
-  <div className="absolute top-4 right-4 z-10 bg-white/90 backdrop-blur-sm rounded-full px-3 py-1 text-sm font-medium text-blue-600 shadow-lg border border-blue-200">
-    {typeof facility.distanceKm === 'number' 
-      ? facility.distanceKm.toFixed(1) 
-      : facility.distanceKm} km
-  </div>
-)}
+                  {facility.distanceKm && (
+                    <div className="absolute top-4 right-4 z-10 bg-white/90 backdrop-blur-sm rounded-full px-3 py-1 text-sm font-medium text-blue-600 shadow-lg border border-blue-200">
+                      {typeof facility.distanceKm === 'number' 
+                        ? facility.distanceKm.toFixed(1) 
+                        : facility.distanceKm} km
+                    </div>
+                  )}
                   <FacilityCard facility={facility} />
                 </div>
               ))}
