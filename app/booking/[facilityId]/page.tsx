@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Image from "next/image";
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,7 +21,6 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-
 import {
   ArrowLeft,
   User,
@@ -41,15 +39,14 @@ import {
   MapPin,
   Building2,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
-
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-
 import { toast } from "sonner";
 import axios from "axios";
 
@@ -101,10 +98,23 @@ interface FormData {
   age: string;
   gender: string;
   department: string;
-  doctor: string;
+  doctorId: string;
+  doctorName: string;
   appointmentDate: string;
   appointmentTime: string;
+  reason: string;
   message: string;
+}
+
+interface PendingBookingResponse {
+  success: boolean;
+  message: string;
+  data: {
+    bookingId: string;
+    status: string;
+    submittedAt: string;
+    timeSlotAvailable: boolean;
+  };
 }
 
 export default function BookingPage() {
@@ -117,6 +127,7 @@ export default function BookingPage() {
   const [departments, setDepartments] = useState<string[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [loading, setLoading] = useState(false);
+  const [checkingExisting, setCheckingExisting] = useState(false);
   
   const [formData, setFormData] = useState<FormData>({
     firstName: "",
@@ -126,14 +137,16 @@ export default function BookingPage() {
     age: "",
     gender: "",
     department: "",
-    doctor: "",
+    doctorId: "",
+    doctorName: "",
     appointmentDate: "",
     appointmentTime: "",
+    reason: "",
     message: "",
   });
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [bookingResponse, setBookingResponse] = useState<any>(null);
+  const [bookingResponse, setBookingResponse] = useState<PendingBookingResponse | null>(null);
 
   // Helper function to format address
   const formatAddress = (address: any): string => {
@@ -222,7 +235,7 @@ export default function BookingPage() {
     }
   }, [facilityId]);
 
-  // Fetch doctors when department changes (for UI only)
+  // Fetch doctors when department changes
   useEffect(() => {
     const fetchDoctors = async () => {
       if (!formData.department) {
@@ -276,43 +289,89 @@ export default function BookingPage() {
     setFormData(prev => ({ 
       ...prev, 
       [field]: value,
-      ...(field === "department" ? { doctor: "" } : {})
+      ...(field === "department" ? { doctorId: "", doctorName: "" } : {})
     }));
   };
 
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
+  const handleDoctorSelect = (doctorId: string) => {
+    const selectedDoctor = doctors.find(doc => doc._id === doctorId);
+    setFormData(prev => ({
+      ...prev,
+      doctorId: doctorId,
+      doctorName: selectedDoctor?.name || ""
+    }));
+  };
 
-  // Validate form
-  if (!formData.firstName || !formData.lastName || !formData.email || !formData.phone || 
-      !formData.age || !formData.gender || !formData.department || !formData.doctor || 
-      !formData.appointmentDate || !formData.appointmentTime) {
-    toast.error("Please fill in all required fields");
-    return;
-  }
+  // Validate phone number (10 digits)
+  const validatePhone = (phone: string): boolean => {
+    return /^\d{10}$/.test(phone);
+  };
 
-  try {
-    setLoading(true);
-
-    // Register patient first - with userRole
-    const registerPayload = {
-      userRole: "patient",
-      userId: facilityId,
-      name: `${formData.firstName} ${formData.lastName}`.trim(),
-      phone: formData.phone,
-      email: formData.email,
-      age: Number(formData.age),
-      gender: formData.gender,
-    };
-
-    console.log("Registering patient with payload:", registerPayload);
-
-    let patientId;
+  // Check for existing pending booking
+  const checkExistingPendingBooking = async (): Promise<boolean> => {
+    if (!facilityId || !formData.phone || !formData.email) return false;
     
     try {
-      const registerResponse = await axios.post(
-        `${PATIENT_SERVICE_URL}/api/v1/patient-service/patient/register/${facilityId}`,
-        registerPayload,
+      setCheckingExisting(true);
+      // Note: You might need to create a new API endpoint to check existing pending bookings
+      // For now, we'll skip this check or implement a lightweight check
+      return false;
+    } catch (error) {
+      console.error("Error checking existing pending booking:", error);
+      return false;
+    } finally {
+      setCheckingExisting(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Validate form
+    if (!formData.firstName || !formData.lastName || !formData.email || !formData.phone || 
+        !formData.age || !formData.gender || !formData.department || !formData.doctorId || 
+        !formData.appointmentDate || !formData.appointmentTime) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
+
+    // Validate phone number
+    if (!validatePhone(formData.phone)) {
+      toast.error("Please enter a valid 10-digit phone number");
+      return;
+    }
+
+    // Validate age is a positive number
+    if (Number(formData.age) <= 0 || Number(formData.age) > 150) {
+      toast.error("Please enter a valid age");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      // Submit pending booking request
+      const payload = {
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        email: formData.email,
+        phone: formData.phone,
+        age: Number(formData.age),
+        gender: formData.gender,
+        department: formData.department,
+        doctorId: formData.doctorId,
+        doctorName: formData.doctorName,
+        preferredDate: formData.appointmentDate,
+        preferredTime: formData.appointmentTime,
+        reason: formData.reason || "General consultation",
+        message: formData.message || ""
+      };
+
+      console.log("Submitting pending booking with payload:", payload);
+
+      const response = await axios.post(
+        `${PATIENT_SERVICE_URL}/api/v1/patient-service/pending-booking/public/booking/submit/${facilityId}`,
+        payload,
         {
           headers: {
             'Content-Type': 'application/json',
@@ -320,109 +379,57 @@ const handleSubmit = async (e: React.FormEvent) => {
         }
       );
 
-      console.log("Registration response:", registerResponse.data);
+      console.log("Booking response:", response.data);
 
-      // Get patient ID from response
-      patientId = registerResponse.data?.data?._id || 
-                  registerResponse.data?.patient?._id || 
-                  registerResponse.data?._id;
-
-    } catch (registerError: any) {
-      // Check if it's a duplicate key error (patient already exists)
-      if (registerError.response?.data?.error?.includes("duplicate key error") && 
-          registerError.response?.data?.error?.includes("email")) {
-        
-        console.log("Patient already exists, trying to fetch existing patient...");
-        
-        // Try to fetch the existing patient by email
-        try {
-          const searchResponse = await axios.get(
-            `${PATIENT_SERVICE_URL}/api/v1/patient-service/patient/search`,
-            {
-              params: {
-                clinicId: facilityId,
-                email: formData.email
-              }
-            }
-          );
-          
-          // Assuming the search returns patient data
-          const existingPatient = searchResponse.data?.patients?.[0] || searchResponse.data?.patient;
-          
-          if (existingPatient?._id) {
-            patientId = existingPatient._id;
-            console.log("Found existing patient with ID:", patientId);
-            toast.info("Using existing patient record");
-          } else {
-            throw new Error("Could not find existing patient record");
-          }
-        } catch (searchError) {
-          console.error("Error searching for existing patient:", searchError);
-          toast.error("Patient already exists but could not retrieve record");
-          setLoading(false);
-          return;
-        }
-      } else {
-        // Re-throw if it's a different error
-        throw registerError;
-      }
-    }
-
-    if (!patientId) {
-      throw new Error("Failed to get patient ID");
-    }
-
-    // Book appointment
-    const bookingPayload = {
-      patientId: patientId,
-      userRole: "patient",
-      department: formData.department,
-      appointmentDate: formData.appointmentDate,
-      appointmentTime: formData.appointmentTime,
-      doctorId: formData.doctor,
-    };
-
-    console.log("Booking appointment with payload:", bookingPayload);
-
-    const response = await axios.post(
-      `${PATIENT_SERVICE_URL}/api/v1/patient-service/appointment/public/book/${facilityId}`,
-      bookingPayload,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      }
-    );
-
-    console.log("Booking response:", response.data);
-
-    setBookingResponse(response.data);
-    setShowConfirmModal(true);
-    
-    toast.success(response.data.message || "Appointment request submitted!");
-
-  } catch (error: any) {
-    console.error("Error booking appointment:", error);
-    
-    if (error.response) {
-      console.error("Error response data:", error.response.data);
-      console.error("Error response status:", error.response.status);
+      setBookingResponse(response.data);
+      setShowConfirmModal(true);
       
-      const errorMessage = error.response.data?.message || 
-                          error.response.data?.error || 
-                          `Server error: ${error.response.status}`;
-      toast.error(errorMessage);
-    } else if (error.request) {
-      console.error("Error request:", error.request);
-      toast.error("No response from server. Please check your connection.");
-    } else {
-      console.error("Error message:", error.message);
-      toast.error(error.message || "Failed to book appointment");
+      toast.success(response.data.message || "Booking request submitted successfully!");
+
+    } catch (error: any) {
+      console.error("Error submitting booking request:", error);
+      
+      if (error.response) {
+        console.error("Error response data:", error.response.data);
+        console.error("Error response status:", error.response.status);
+        
+        // Handle specific error cases
+        if (error.response.status === 409) {
+          // Conflict - existing pending booking
+          const data = error.response.data;
+          toast.error(data.message || "You already have a pending booking request");
+          
+          if (data.data?.bookingId) {
+            setBookingResponse({
+              success: false,
+              message: data.message,
+              data: {
+                bookingId: data.data.bookingId,
+                status: "pending",
+                submittedAt: data.data.submittedAt,
+                timeSlotAvailable: false
+              }
+            });
+            setShowConfirmModal(true);
+          }
+        } else {
+          const errorMessage = error.response.data?.message || 
+                              error.response.data?.error || 
+                              `Server error: ${error.response.status}`;
+          toast.error(errorMessage);
+        }
+      } else if (error.request) {
+        console.error("Error request:", error.request);
+        toast.error("No response from server. Please check your connection.");
+      } else {
+        console.error("Error message:", error.message);
+        toast.error(error.message || "Failed to submit booking request");
+      }
+    } finally {
+      setLoading(false);
     }
-  } finally {
-    setLoading(false);
-  }
-};
+  };
+
   const handleConfirmClose = () => {
     setShowConfirmModal(false);
     setTimeout(() => {
@@ -430,8 +437,8 @@ const handleSubmit = async (e: React.FormEvent) => {
     }, 500);
   };
 
-  // Get selected doctor details with safe defaults
-  const selectedDoctor = doctors.find(doc => doc._id === formData.doctor);
+  // Get selected doctor details
+  const selectedDoctor = doctors.find(doc => doc._id === formData.doctorId);
 
   // Default placeholder component for images
   const DoctorPlaceholder = ({ name, size = "md" }: { name: string; size?: "sm" | "md" | "lg" }) => {
@@ -490,7 +497,11 @@ const handleSubmit = async (e: React.FormEvent) => {
     );
   }
 
-  if (showConfirmModal) {
+  if (showConfirmModal && bookingResponse) {
+    const isExistingPending = bookingResponse.data?.status === "pending" && !bookingResponse.success;
+    const isSuccess = bookingResponse.success;
+    const timeSlotAvailable = bookingResponse.data?.timeSlotAvailable;
+
     return (
       <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
         <DialogContent className="max-w-lg bg-white/95 backdrop-blur-2xl border-2 border-white/60 shadow-2xl rounded-3xl p-0 overflow-hidden">
@@ -499,37 +510,48 @@ const handleSubmit = async (e: React.FormEvent) => {
           <div className="relative p-8">
             <div className="flex justify-center mb-6">
               <div className="relative">
-                <div className="w-24 h-24 bg-gradient-to-br from-green-400 via-emerald-500 to-green-600 rounded-full flex items-center justify-center shadow-2xl shadow-green-500/50 animate-in zoom-in duration-500">
-                  <CheckCircle2 className="w-14 h-14 text-white animate-in zoom-in duration-700 delay-200" />
+                <div className={`w-24 h-24 ${isExistingPending ? 'bg-orange-400' : isSuccess ? 'bg-gradient-to-br from-green-400 via-emerald-500 to-green-600' : 'bg-yellow-400'} rounded-full flex items-center justify-center shadow-2xl shadow-green-500/50 animate-in zoom-in duration-500`}>
+                  {isExistingPending ? (
+                    <AlertCircle className="w-14 h-14 text-white animate-in zoom-in duration-700 delay-200" />
+                  ) : (
+                    <CheckCircle2 className="w-14 h-14 text-white animate-in zoom-in duration-700 delay-200" />
+                  )}
                 </div>
-                <div className="absolute -top-2 -right-2 animate-in zoom-in duration-500 delay-300">
-                  <PartyPopper className="w-8 h-8 text-yellow-500" />
-                </div>
+                {isSuccess && (
+                  <div className="absolute -top-2 -right-2 animate-in zoom-in duration-500 delay-300">
+                    <PartyPopper className="w-8 h-8 text-yellow-500" />
+                  </div>
+                )}
               </div>
             </div>
 
             <DialogHeader className="space-y-3 text-center mb-6">
-              <DialogTitle className="text-3xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
-                Booking {bookingResponse?.data?.status === "pending_approval" ? "Request Submitted!" : "Confirmed!"}
+              <DialogTitle className={`text-3xl font-bold bg-gradient-to-r ${
+                isExistingPending ? 'from-orange-600 to-red-600' : 
+                isSuccess ? 'from-green-600 to-emerald-600' : 
+                'from-yellow-600 to-orange-600'
+              } bg-clip-text text-transparent`}>
+                {isExistingPending ? "Pending Booking Found" : 
+                 isSuccess ? "Booking Request Submitted!" : 
+                 "Booking Status"}
               </DialogTitle>
               <DialogDescription className="sr-only">
-                Your appointment has been successfully scheduled.
+                Your appointment request status
               </DialogDescription>
               <p className="text-gray-600 text-base">
-                {bookingResponse?.data?.status === "pending_approval" 
-                  ? "Your appointment request has been submitted and is waiting for approval."
-                  : "Your appointment has been successfully scheduled."}
+                {bookingResponse.message}
               </p>
-              <p className="text-sm text-gray-500">
-                We've sent a confirmation email to{" "}
-                <span className="font-semibold text-gray-700">{formData.email}</span>
-              </p>
+              {bookingResponse.data?.bookingId && (
+                <p className="text-sm text-gray-500">
+                  Booking ID: <span className="font-semibold text-gray-700">{bookingResponse.data.bookingId}</span>
+                </p>
+              )}
             </DialogHeader>
 
             <div className="bg-gradient-to-br from-blue-50 to-purple-50 border-2 border-blue-200/50 rounded-2xl p-6 mb-6 space-y-3">
               <div className="flex items-center gap-2 mb-3">
                 <CalendarCheck className="w-5 h-5 text-blue-600" />
-                <h3 className="font-bold text-gray-900">Appointment Details</h3>
+                <h3 className="font-bold text-gray-900">Request Details</h3>
               </div>
               
               <div className="grid grid-cols-2 gap-3 text-sm">
@@ -543,7 +565,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                 </div>
                 <div className="bg-white/60 backdrop-blur-sm rounded-xl p-3 border border-white/80">
                   <p className="text-xs text-gray-500 mb-1">Doctor</p>
-                  <p className="font-semibold text-gray-900">{selectedDoctor?.name || "Selected Doctor"}</p>
+                  <p className="font-semibold text-gray-900">{selectedDoctor?.name || formData.doctorName}</p>
                 </div>
                 <div className="bg-white/60 backdrop-blur-sm rounded-xl p-3 border border-white/80">
                   <p className="text-xs text-gray-500 mb-1">Date</p>
@@ -555,6 +577,14 @@ const handleSubmit = async (e: React.FormEvent) => {
                 <p className="text-xs text-gray-500 mb-1">Time</p>
                 <p className="font-semibold text-gray-900">{formData.appointmentTime}</p>
               </div>
+
+              {timeSlotAvailable === false && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
+                  <p className="text-xs text-yellow-800">
+                    ⚠️ Note: This time slot may be already booked. The clinic will contact you with alternatives.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3">
@@ -564,17 +594,13 @@ const handleSubmit = async (e: React.FormEvent) => {
               >
                 Back to Home
               </Button>
-              <Button
-                variant="outline"
-                onClick={() => window.print()}
-                className="flex-1 border-2 border-gray-300 hover:bg-gray-50 rounded-xl h-12 font-semibold"
-              >
-                Print Details
-              </Button>
             </div>
 
             <p className="text-xs text-center text-gray-500 mt-4">
-              📞 For any changes, please contact us at {facility.phone}
+              📞 For any questions, please contact us at {facility.phone}
+            </p>
+            <p className="text-xs text-center text-gray-500 mt-1">
+              The clinic will review your request and confirm within 24 hours.
             </p>
           </div>
         </DialogContent>
@@ -671,10 +697,10 @@ const handleSubmit = async (e: React.FormEvent) => {
         <Card className="lg:col-span-2 bg-white/80 backdrop-blur-xl border-white/50 shadow-2xl shadow-purple-500/10 rounded-3xl">
           <CardHeader className="pb-6">
             <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              Book Your Appointment
+              Request Appointment
             </CardTitle>
             <p className="text-gray-600 text-sm mt-2">
-              Fill out the form below and we'll confirm your appointment within 24 hours.
+              Fill out the form below to request an appointment. The clinic will review and confirm within 24 hours.
             </p>
           </CardHeader>
           <CardContent>
@@ -737,11 +763,13 @@ const handleSubmit = async (e: React.FormEvent) => {
                     id="phone"
                     type="tel"
                     required
-                    placeholder="(555) 123-4567"
+                    placeholder="1234567890"
                     value={formData.phone}
                     onChange={(e) => handleChange("phone", e.target.value)}
                     className="bg-white/90 backdrop-blur-md border-white/50 rounded-xl h-12 focus:ring-2 focus:ring-blue-500"
+                    maxLength={10}
                   />
+                  <p className="text-xs text-gray-500 mt-1">10-digit number without spaces or dashes</p>
                 </div>
               </div>
 
@@ -760,6 +788,8 @@ const handleSubmit = async (e: React.FormEvent) => {
                     value={formData.age}
                     onChange={(e) => handleChange("age", e.target.value)}
                     className="bg-white/90 backdrop-blur-md border-white/50 rounded-xl h-12 focus:ring-2 focus:ring-blue-500"
+                    min="1"
+                    max="150"
                   />
                 </div>
                 <div className="space-y-2">
@@ -816,8 +846,8 @@ const handleSubmit = async (e: React.FormEvent) => {
                     Select Doctor *
                   </Label>
                   <Select 
-                    value={formData.doctor} 
-                    onValueChange={(value) => handleChange("doctor", value)} 
+                    value={formData.doctorId} 
+                    onValueChange={handleDoctorSelect} 
                     required
                     disabled={doctors.length === 0}
                   >
@@ -967,7 +997,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               <div className="space-y-2">
                 <Label htmlFor="appointmentDate" className="flex items-center gap-2 text-gray-700 font-semibold">
                   <Calendar className="w-4 h-4 text-blue-600" />
-                  Appointment Date *
+                  Preferred Date *
                 </Label>
                 <Input
                   id="appointmentDate"
@@ -984,7 +1014,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               <div className="space-y-2">
                 <Label htmlFor="appointmentTime" className="flex items-center gap-2 text-gray-700 font-semibold">
                   <Clock className="w-4 h-4 text-blue-600" />
-                  Appointment Time *
+                  Preferred Time *
                 </Label>
                 <Input
                   id="appointmentTime"
@@ -995,6 +1025,13 @@ const handleSubmit = async (e: React.FormEvent) => {
                   className="bg-white/90 backdrop-blur-md border-white/50 rounded-xl h-12 focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+
+              {/* Reason (hidden field but required by API) */}
+              <input
+                type="hidden"
+                value={formData.reason || "General consultation"}
+                onChange={(e) => handleChange("reason", e.target.value)}
+              />
 
               {/* Message */}
               <div className="space-y-2">
@@ -1016,20 +1053,20 @@ const handleSubmit = async (e: React.FormEvent) => {
                 <Button
                   type="submit"
                   size="lg"
-                  disabled={loading}
+                  disabled={loading || checkingExisting}
                   className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-2xl shadow-blue-500/40 rounded-xl py-6 text-lg font-semibold disabled:opacity-50"
                 >
-                  {loading ? (
+                  {loading || checkingExisting ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                      Booking...
+                      {checkingExisting ? "Checking..." : "Submitting..."}
                     </>
                   ) : (
-                    "Confirm Booking"
+                    "Submit Booking Request"
                   )}
                 </Button>
                 <p className="text-xs text-gray-500 text-center mt-3">
-                  By booking, you agree to our terms and conditions
+                  By submitting, you agree to our terms and conditions. The clinic will review and confirm within 24 hours.
                 </p>
               </div>
             </form>
