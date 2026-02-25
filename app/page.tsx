@@ -6,7 +6,7 @@ import { SearchFilters } from "@/components/SearchFilters";
 import { FacilityCard } from "@/components/FacilityCard";
 import { facilities as staticFacilities, Facility } from "@/data/facilities";
 import { Button } from "@/components/ui/button";
-import { ChevronDown, Navigation,  Locate, HelpCircle, } from "lucide-react";
+import { ChevronDown, Navigation, Locate, HelpCircle } from "lucide-react";
 
 // Define proper types instead of 'any'
 interface ClinicAddress {
@@ -41,8 +41,7 @@ const transformClinicToFacility = (clinic: ClinicData, index?: number): Facility
                    "Unknown Location";
   
   // Generate a consistent ID
- const id = clinic._id || `clinic-${index}`;
-
+  const id = clinic._id || `clinic-${index}`;
   
   // Default images for fallback
   const DEFAULT_IMAGES = {
@@ -93,26 +92,26 @@ export default function Home() {
   const [hasRequestedLocation, setHasRequestedLocation] = useState(false);
   const [apiDebugInfo, setApiDebugInfo] = useState<string>("");
   
-  // Add a ref to track if we've already attempted location request
+  // Add refs to track if we've already attempted location request and fetched clinics
   const locationRequestAttempted = useRef(false);
+  const clinicsFetchedForLocation = useRef<string | null>(null);
 
   // Check if geolocation is supported
   const [isGeolocationSupported, setIsGeolocationSupported] = useState<boolean | null>(null);
-  console.log("🔍 Geolocation supported:", isGeolocationSupported);
-useEffect(() => {
-  if (typeof window !== "undefined" && "geolocation" in navigator) {
-    setIsGeolocationSupported(true);
-  } else {
-    setIsGeolocationSupported(false);
-  }
-}, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && "geolocation" in navigator) {
+      setIsGeolocationSupported(true);
+    } else {
+      setIsGeolocationSupported(false);
+    }
+  }, []);
 
   // Check permission status on mount
   useEffect(() => {
     console.log("🔍 Checking permission status...");
     
-   if (isGeolocationSupported !== true) return;
-
+    if (isGeolocationSupported !== true) return;
 
     // Check if we have permission status API
     if (navigator.permissions && navigator.permissions.query) {
@@ -124,7 +123,7 @@ useEffect(() => {
           setLocationPermission(result.state);
           
           // If permission already granted, automatically get location
-          if (result.state === 'granted' && !locationRequestAttempted.current) {
+          if (result.state === 'granted' && !locationRequestAttempted.current && !userLocation) {
             console.log("📍 Permission already granted, getting location...");
             locationRequestAttempted.current = true;
             requestUserLocation();
@@ -134,21 +133,33 @@ useEffect(() => {
           result.addEventListener('change', () => {
             console.log("📍 Permission state changed to:", result.state);
             setLocationPermission(result.state);
+            
+            // If permission becomes granted, request location
+            if (result.state === 'granted' && !userLocation) {
+              locationRequestAttempted.current = true;
+              requestUserLocation();
+            }
           });
         })
         .catch((err) => {
           console.error("❌ Error checking permission:", err);
         });
     }
-  }, [isGeolocationSupported]);
+  }, [isGeolocationSupported, userLocation]);
 
   // Function to request user location
   const requestUserLocation = useCallback(() => {
     console.log("📍 requestUserLocation called");
     
-   if (isGeolocationSupported !== true) {
+    if (isGeolocationSupported !== true) {
       console.log("❌ Geolocation not supported");
       setLocationError("Geolocation is not supported by your browser.");
+      return;
+    }
+
+    // Don't request if already requesting or already have location
+    if (isRequestingLocation || userLocation) {
+      console.log("📍 Already requesting location or location already exists");
       return;
     }
 
@@ -163,6 +174,7 @@ useEffect(() => {
         console.log("📍 Location request timeout");
         setIsRequestingLocation(false);
         setLocationError("Location request timed out. Please try again.");
+        locationRequestAttempted.current = false; // Allow retry
       }
     }, 15000);
     
@@ -177,17 +189,16 @@ useEffect(() => {
       },
       (error) => {
         clearTimeout(timeoutId);
-        console.error("❌ Geolocation error:", error);
+        console.error("❌ Geolocation error occurred");
         
         // Log more details about the error
-        if (error.code) {
+        if (error.code !== undefined) {
           console.error("Error code:", error.code);
-        }
-        if (error.message) {
           console.error("Error message:", error.message);
         }
         
         setIsRequestingLocation(false);
+        locationRequestAttempted.current = false; // Allow retry on error
         
         // Set appropriate error message based on error code
         if (error.code === 1) { // PERMISSION_DENIED
@@ -206,76 +217,86 @@ useEffect(() => {
         maximumAge: 0
       }
     );
-  }, [isGeolocationSupported]);
+  }, [isGeolocationSupported, isRequestingLocation, userLocation]);
 
   // Fetch nearby clinics when user location is available
- useEffect(() => {
-  const fetchNearbyClinics = async () => {
-    if (!userLocation) {
-      console.log("📍 No user location, skipping API fetch");
-      return;
-    }
-    
-    console.log("📍 Fetching nearby clinics for location:", userLocation);
-    setIsLoadingClinics(true);
-    setLocationError(null);
-    setApiDebugInfo("Fetching clinics...");
-    
-    try {
-      const { lat, lng } = userLocation;
-      const radius = 50; // Default radius in km
+  useEffect(() => {
+    const fetchNearbyClinics = async () => {
+      if (!userLocation) {
+        console.log("📍 No user location, skipping API fetch");
+        return;
+      }
+
+      // Create a location key to check if we've already fetched for this location
+      const locationKey = `${userLocation.lat.toFixed(4)},${userLocation.lng.toFixed(4)}`;
       
-      // Single API endpoint
-      const endpoint = `http://localhost:8001/api/v1/auth/clinic/location-based-clinics/?lat=${lat}&lng=${lng}&radius=${radius}`;
-      
-      console.log("📍 Calling API endpoint:", endpoint);
-      
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      if (!response.ok) {
-        throw new Error(`API responded with status ${response.status}`);
+      // Skip if we've already fetched clinics for this exact location
+      if (clinicsFetchedForLocation.current === locationKey) {
+        console.log("📍 Already fetched clinics for this location, skipping");
+        return;
       }
       
-      console.log("📍 API Response status:", response.status);
+      console.log("📍 Fetching nearby clinics for location:", userLocation);
+      setIsLoadingClinics(true);
+      setLocationError(null);
+      setApiDebugInfo("Fetching clinics...");
       
-      const result = await response.json();
-      console.log("📍 API Response data:", result);
-      
-      setApiDebugInfo(`API Success: Found ${result.data?.length || 0} clinics`);
-      
-      if (result.success && result.data) {
-        // Transform API data to Facility type
-        const transformedClinics = transformClinicsToFacilities(result.data);
-        console.log("📍 Transformed clinics:", transformedClinics.length);
+      try {
+        const { lat, lng } = userLocation;
+        const radius = 50; // Default radius in km
         
-        console.log("📍 Setting nearby clinics:", transformedClinics.length);
-        setNearbyClinics(transformedClinics);
-      } else {
-        console.log("📍 No clinics found in API response");
-        setApiDebugInfo("No clinics found in API response");
+        // Single API endpoint
+        const endpoint = `http://localhost:8001/api/v1/auth/clinic/location-based-clinics/?lat=${lat}&lng=${lng}&radius=${radius}`;
+        
+        console.log("📍 Calling API endpoint:", endpoint);
+        
+        const response = await fetch(endpoint, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          throw new Error(`API responded with status ${response.status}`);
+        }
+        
+        console.log("📍 API Response status:", response.status);
+        
+        const result = await response.json();
+        console.log("📍 API Response data:", result);
+        
+        setApiDebugInfo(`API Success: Found ${result.data?.length || 0} clinics`);
+        
+        if (result.success && result.data) {
+          // Transform API data to Facility type
+          const transformedClinics = transformClinicsToFacilities(result.data);
+          console.log("📍 Transformed clinics:", transformedClinics.length);
+          
+          console.log("📍 Setting nearby clinics:", transformedClinics.length);
+          setNearbyClinics(transformedClinics);
+          clinicsFetchedForLocation.current = locationKey; // Mark as fetched
+        } else {
+          console.log("📍 No clinics found in API response");
+          setApiDebugInfo("No clinics found in API response");
+          setNearbyClinics([]);
+          clinicsFetchedForLocation.current = locationKey; // Still mark as fetched (no clinics found)
+        }
+      } catch (error) {
+        console.error("❌ Error fetching nearby clinics:", error);
+        setApiDebugInfo(`API Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        setLocationError("Failed to fetch nearby clinics. Please try again later.");
         setNearbyClinics([]);
+      } finally {
+        setIsLoadingClinics(false);
       }
-    } catch (error) {
-      console.error("❌ Error fetching nearby clinics:", error);
-      setApiDebugInfo(`API Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setLocationError("Failed to fetch nearby clinics. Please try again later.");
-      setNearbyClinics([]);
-    } finally {
-      setIsLoadingClinics(false);
-    }
-  };
-  
-  fetchNearbyClinics();
-}, [userLocation]);
+    };
+    
+    fetchNearbyClinics();
+  }, [userLocation]); // Only depend on userLocation
 
   // Use nearbyClinics if available, otherwise use static facilities
   const displayFacilities = nearbyClinics.length > 0 ? nearbyClinics : staticFacilities;
-  console.log("📍 Display facilities:", displayFacilities.length);
 
   // Get unique locations from facilities for filter dropdown
   const locations = useMemo(() => {
@@ -336,7 +357,7 @@ useEffect(() => {
     // Reset any previous errors
     setLocationError(null);
     // Reset the attempted flag to allow new request
-    locationRequestAttempted.current = true;
+    locationRequestAttempted.current = false;
     requestUserLocation();
   };
 
@@ -345,19 +366,8 @@ useEffect(() => {
     window.open('https://support.google.com/chrome/answer/142065?hl=en', '_blank');
   };
 
-  // const handleOpenSettings = () => {
-  //   console.log("📍 Open settings button clicked");
-  //   window.open('chrome://settings/content/location', '_blank');
-  // };
-
-  // const handleRefreshAfterSettings = () => {
-  //   console.log("📍 Refresh after settings button clicked");
-  //   window.location.reload();
-  // };
-
   // Determine which banner to show
-  const showPermissionBanner = !userLocation && !locationError && locationPermission !== 'granted' && !hasRequestedLocation;
-  // const showErrorBanner = locationError && !isRequestingLocation;
+  const showPermissionBanner = !userLocation && !locationError && locationPermission !== 'granted' && !hasRequestedLocation && !isRequestingLocation;
   const showSuccessBanner = userLocation && !locationError && nearbyClinics.length > 0;
 
   // Show loader only when actively requesting location or fetching clinics
@@ -425,7 +435,6 @@ useEffect(() => {
           </div>
         </div>
       )}
-
 
       <SearchFilters
         searchQuery={searchQuery}
