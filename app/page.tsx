@@ -436,7 +436,7 @@ export default function Home() {
         </div>
       )}
 
-      <SearchFilters
+      {/* <SearchFilters
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         selectedType={selectedType}
@@ -444,7 +444,7 @@ export default function Home() {
         selectedLocation={selectedLocation}
         onLocationChange={setSelectedLocation}
         locations={locations}
-      />
+      /> */}
 
       <main className="container mx-auto px-4 py-12">
         <div className="flex items-center justify-between mb-8">
